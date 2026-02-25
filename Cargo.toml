@@ -1,11 +1,43 @@
 [package]
 name = "git-compression-stats"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
+authors = ["kassoulet"]
+license = "MIT"
+repository = "https://github.com/kassoulet/git-compression-stats"
+homepage = "https://github.com/kassoulet/git-compression-stats"
+documentation = "https://docs.rs/git-compression-stats"
+description = "A high-performance CLI tool to analyze how efficiently files are compressed within a Git repository's history"
+keywords = ["git", "compression", "analysis", "cli", "performance"]
+categories = ["command-line-utilities", "development-tools", "visualization"]
+readme = "README.md"
 
 [dependencies]
-gix = { version = "0.72", default-features = false, features = ["blocking-network-client"] }
 clap = { version = "4.5", features = ["derive"] }
 human-size = "0.4"
 indicatif = "0.17"
 rayon = "1.10"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = "allow"
+multiple_crate_versions = "allow"
+struct_excessive_bools = "allow"
+doc_markdown = "allow"
+missing_panics_doc = "allow"
+too_many_lines = "allow"
+unnecessary_wraps = "allow"
+inefficient_to_string = "allow"

@@ -1,1 +1,21 @@
-/target
+# Build output
+/target/
+**/target/
+
+# Cargo lock for libraries (uncomment if publishing as a library)
+# Cargo.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Rust Analyzer
+.rust-analyzer/
+
+# Environment
+.env
+.env.local

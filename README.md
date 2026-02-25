@@ -1,5 +1,11 @@
 # Git Compression Stats
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Crates.io](https://img.shields.io/crates/v/git-compression-stats.svg)](https://crates.io/crates/git-compression-stats)
+[![docs.rs](https://docs.rs/git-compression-stats/badge.svg)](https://docs.rs/git-compression-stats)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-blue.svg)](https://github.com/rust-lang/rust)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/kassoulet/git-compression-stats/ci.yml?branch=main)](https://github.com/kassoulet/git-compression-stats/actions)
+
 A high-performance Rust CLI tool to analyze how efficiently files are compressed within a Git repository's history. It compares the total uncompressed size of all versions of a file against their actual "on-disk" size in Git's object database (pack files).
 
 ## 🚀 Key Features
@@ -15,9 +21,23 @@ A high-performance Rust CLI tool to analyze how efficiently files are compressed
     - **Color-Coded Ratios**: Visual indicators for compression efficiency (🟢 < 50%, 🟠 50-80%, 🔴 > 80%).
 - **Flexible Reporting**: Sort by path, size, versions, uncompressed size, compressed size, or ratio.
 
-## 🛠️ Installation
+## 📦 Installation
 
-Ensure you have Rust and Cargo installed, then clone the repository and build:
+### From Source
+
+```bash
+git clone https://github.com/kassoulet/git-compression-stats.git
+cd git-compression-stats
+cargo install --path .
+```
+
+### From crates.io (when published)
+
+```bash
+cargo install git-compression-stats
+```
+
+### Build Manually
 
 ```bash
 git clone https://github.com/kassoulet/git-compression-stats.git
@@ -30,17 +50,53 @@ The binary will be available at `./target/release/git-compression-stats`.
 ## 📖 Usage
 
 ```bash
-./target/release/git-compression-stats [OPTIONS] [REPO_PATH]
+git-compression-stats [OPTIONS] [REPO_PATH]
 ```
 
 ### Options
 
-- `-r, --recursive`: Scan the directory for multiple Git repositories.
-- `-c, --current-only`: Rapid analysis of files currently in the working tree (ignores history).
-- `-H, --human-readable`: Use human-readable sizes (KB, MB, GB).
-- `-s, --sort-by <path|size|versions|uncompressed|compressed|ratio>`: Set the primary sort column (default: path).
-- `-d, --descending`: Reverse the sort order.
-- `--no-progress`: Disable the interactive progress bar.
+| Option | Description |
+|--------|-------------|
+| `-r, --recursive` | Scan the directory for multiple Git repositories |
+| `-c, --current-only` | Rapid analysis of files currently in the working tree (ignores history) |
+| `-H, --human-readable` | Use human-readable sizes (KB, MB, GB) |
+| `-s, --sort-by <SORT>` | Set the primary sort column: `path`, `size`, `versions`, `uncompressed`, `compressed`, `ratio` (default: `path`) |
+| `-d, --descending` | Reverse the sort order |
+| `--no-progress` | Disable the interactive progress bar |
+| `-h, --help` | Print help information |
+| `-V, --version` | Print version information |
+
+### Examples
+
+**Analyze current repository:**
+```bash
+git-compression-stats
+```
+
+**Analyze a specific repository:**
+```bash
+git-compression-stats /path/to/repo
+```
+
+**Scan recursively for multiple repositories:**
+```bash
+git-compression-stats -r ~/projects
+```
+
+**Quick analysis of current files only:**
+```bash
+git-compression-stats -c
+```
+
+**Sort by compression ratio in descending order:**
+```bash
+git-compression-stats -s ratio -d
+```
+
+**Human-readable output:**
+```bash
+git-compression-stats -H
+```
 
 ## 📊 Example Output
 
@@ -55,15 +111,50 @@ src/main.rs                 15379 B          4          32023 B           5620 B
 TOTAL                       71999 B          9         142216 B          19900 B        14.0%
 ```
 
+### Color Coding
+
+The ratio column is color-coded based on compression efficiency:
+
+- 🟢 **Green** (< 50%): Excellent compression
+- 🟠 **Orange** (50-80%): Moderate compression
+- 🔴 **Red** (> 80%): Poor compression
+
 ## 🏗️ Technical Architecture
 
-- **Rust**: For high-performance, memory-safe execution.
-- **Rayon**: To parallelize data-intensive tasks.
-- **Clap**: For robust command-line argument parsing.
-- **Indicatif**: To provide progress feedback in the terminal.
-- **Human-Size**: For readable byte formatting.
-- **Git Binary**: Directly interfaces with local `git` for maximum speed and accuracy.
+### Dependencies
+
+| Crate | Purpose |
+|-------|---------|
+| `rayon` | Parallelism engine for concurrent phases and parallel history processing |
+| `clap` | Command-line argument parsing and validation |
+| `human-size` | Formats raw byte counts into human-readable units |
+| `indicatif` | Progress bars and terminal styling |
+
+### Data Flow
+
+1. **Object Inventory**: Runs `git cat-file --batch-check --batch-all-objects` to map every Object ID to its compressed and uncompressed size.
+2. **History Scanning**: Fetches all commit SHAs via `git rev-list --all` and distributes them across parallel workers using `git diff-tree --stdin`.
+3. **Latest State Verification**: Performs `git ls-tree -r HEAD` to determine current file sizes.
+4. **Aggregation and Sorting**: Merges results and performs parallel sort based on user-specified criteria.
+
+### Performance Targets
+
+- **Large Scale**: Capable of analyzing repositories with millions of commits (e.g., Linux Kernel) in under a minute on modern hardware.
+- **Efficiency**: CPU utilization scales linearly with history depth and number of cores.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## 📝 Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a list of changes.
 
 ## ⚖️ License
 
-[MIT](LICENSE) (or your preferred license)
+This project is licensed under the [MIT License](LICENSE).
+
+## 🙏 Acknowledgments
+
+- The Git project for the amazing version control system
+- The Rust community for excellent libraries and tools

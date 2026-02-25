@@ -1,0 +1,20 @@
+# Clippy configuration
+# See: https://rust-lang.github.io/rust-clippy/master/index.html
+
+# Allow threshold for cognitive complexity
+cognitive-complexity-threshold = 25
+
+# Allow threshold for too many arguments
+too-many-arguments-threshold = 12
+
+# Disallowed names (will trigger a warning)
+disallowed-names = ["foo", "bar", "baz", "qux"]
+
+# Allowed identities for blanket implementations
+allowed-idents-below-min-chars = ["id", "io", "ip", "tc"]
+
+# Check private items
+check-private-items = true
+
+# MSRV (Minimum Supported Rust Version)
+msrv = "1.85.0"
