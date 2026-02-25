@@ -163,3 +163,4 @@ fn get_object_size_on_disk(repo: &gix::Repository, oid: gix::ObjectId) -> Option
     None
 }
 // Version 2
+// Version 3
