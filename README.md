@@ -146,10 +146,6 @@ The ratio column is color-coded based on compression efficiency:
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-## 📝 Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for a list of changes.
-
 ## ⚖️ License
 
 This project is licensed under the [MIT License](LICENSE).
