@@ -18,6 +18,7 @@ jobs:
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache cargo registry
@@ -44,6 +45,8 @@ jobs:
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
 
       - name: Build release
         run: cargo build --release --verbose
