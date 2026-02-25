@@ -162,3 +162,4 @@ fn get_object_size_on_disk(repo: &gix::Repository, oid: gix::ObjectId) -> Option
     // For packed objects, we use the uncompressed size as approximation
     None
 }
+// Version 2
