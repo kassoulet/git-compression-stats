@@ -446,13 +446,33 @@ fn main() {
     }
 }
 
-/// Run the main analysis logic
+/// Check if git is installed and available.
+///
+/// # Errors
+///
+/// Returns an error if git is not installed or not found in PATH.
+fn check_git_installed() -> Result<(), &'static str> {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map_err(|_| "git is not installed. Please install git and try again.")?;
+    Ok(())
+}
+
+/// Run the main analysis logic.
 ///
 /// # Errors
 ///
 /// Returns an error if repository analysis fails.
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
+    // Check if git is available
+    if let Err(e) = check_git_installed() {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+
     let repos = if args.recursive {
         find_git_repos(&args.repo_path)
     } else {
