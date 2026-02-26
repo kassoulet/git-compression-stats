@@ -198,11 +198,7 @@ fn parse_size(size_str: &str) -> Option<u64> {
         Some('G') => (&size_str[..size_str.len() - 1], 1024 * 1024 * 1024),
         _ => (size_str.as_str(), 1),
     };
-    num_str
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .map(|n| n * multiplier)
+    num_str.trim().parse::<u64>().ok().map(|n| n * multiplier)
 }
 
 /// Output data for JSON/CSV formats
@@ -236,11 +232,7 @@ struct JsonOutput {
 
 /// Print output in table format
 #[allow(clippy::cast_precision_loss)]
-fn print_table(
-    sorted_files: &[(&String, &FileStats)],
-    path_width: usize,
-    human_readable: bool,
-) {
+fn print_table(sorted_files: &[(&String, &FileStats)], path_width: usize, human_readable: bool) {
     let colors = Colors::new();
 
     println!(
@@ -270,7 +262,7 @@ fn print_table(
         let dp = if path.len() > path_width {
             format!("...{}", &path[path.len() - (path_width - 3)..])
         } else {
-            path.to_string()
+            (*path).clone()
         };
         let rs = format!(
             "{color}{:>10.1}%{reset}",
@@ -333,6 +325,7 @@ fn print_json(sorted_files: &[(&String, &FileStats)], human_readable: bool) {
     let total_versions: u64 = files.iter().map(|f| f.versions).sum();
     let total_uncompressed: u64 = files.iter().map(|f| f.total_uncompressed).sum();
     let total_compressed: u64 = files.iter().map(|f| f.total_compressed).sum();
+    #[allow(clippy::cast_precision_loss)]
     let global_ratio = if total_uncompressed > 0 {
         (total_compressed as f64 / total_uncompressed as f64) * 100.0
     } else {
@@ -788,7 +781,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
             }
         };
-        if args.descending { cmp.reverse() } else { cmp }
+        if args.descending {
+            cmp.reverse()
+        } else {
+            cmp
+        }
     });
 
     if let Some(pb) = &overall_pb {
@@ -809,9 +806,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .filter(|(_, stats)| {
             let passes_size = stats.latest_size >= min_size_bytes;
-            let passes_ratio = args
-                .min_ratio
-                .map_or(true, |min_r| stats.ratio() >= min_r);
+            let passes_ratio = args.min_ratio.is_none_or(|min_r| stats.ratio() >= min_r);
             passes_size && passes_ratio
         })
         .collect();

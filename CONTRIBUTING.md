@@ -47,6 +47,23 @@ cd git-compression-stats
 cargo build --release
 ```
 
+### Pre-commit Hook
+
+We provide a pre-commit hook that runs the same checks as CI (formatting, build, tests, and clippy):
+
+```bash
+# Install the pre-commit hook
+ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit
+```
+
+Once installed, the hook will automatically run before each commit and prevent commits that fail CI checks.
+
+To run the checks manually:
+
+```bash
+./scripts/pre-commit.sh
+```
+
 ### Running Tests
 
 ```bash
