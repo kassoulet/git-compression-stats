@@ -491,7 +491,8 @@ fn analyze_repo(
                             if let Some(oid) = parts.nth(2) {
                                 let (uncompressed, _) = sizes.get(oid).copied().unwrap_or((0, 0));
                                 // Store OID too for current_only mode
-                                latest.insert(filename.to_string(), (oid.to_string(), uncompressed));
+                                latest
+                                    .insert(filename.to_string(), (oid.to_string(), uncompressed));
                             }
                         }
                     }
