@@ -10,11 +10,14 @@
 //! - Parallel execution with Rayon for concurrent phases
 //! - Real-time progress feedback with indicatif
 //! - Color-coded compression ratio indicators
+//! - JSON/CSV output formats for programmatic use
+//! - Filtering by size and compression ratio thresholds
 
 use clap::{Parser, ValueEnum};
 use human_size::{Byte, SpecificSize};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::PathBuf;
@@ -51,6 +54,26 @@ struct Args {
     /// Use human-readable sizes (KB, MB, GB)
     #[arg(short = 'H', long)]
     human_readable: bool,
+
+    /// Output format (table, json, csv)
+    #[arg(short, long, value_enum, default_value = "table")]
+    format: OutputFormat,
+
+    /// Minimum file size to display (e.g., 1024, 1K, 1M, 1G)
+    #[arg(long, value_name = "SIZE")]
+    min_size: Option<String>,
+
+    /// Minimum compression ratio to display (0-100%)
+    #[arg(long, value_name = "RATIO")]
+    min_ratio: Option<f64>,
+}
+
+/// Output format options
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Table,
+    Json,
+    Csv,
 }
 
 /// Sort options for the output
@@ -65,7 +88,7 @@ enum SortBy {
 }
 
 /// Statistics for a single file
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize)]
 struct FileStats {
     /// Number of unique versions (blobs) of this file
     versions: u64,
@@ -75,6 +98,18 @@ struct FileStats {
     total_compressed: u64,
     /// Size of the file in the most recent version (HEAD)
     latest_size: u64,
+}
+
+impl FileStats {
+    /// Calculate compression ratio as percentage (0-100)
+    #[allow(clippy::cast_precision_loss)]
+    fn ratio(&self) -> f64 {
+        if self.total_uncompressed > 0 {
+            (self.total_compressed as f64 / self.total_uncompressed as f64) * 100.0
+        } else {
+            0.0
+        }
+    }
 }
 
 const COLOR_THRESHOLD: u64 = 1024;
@@ -151,6 +186,194 @@ fn get_color(colors: &Colors, ratio: f64, size: u64) -> &'static str {
         colors.orange
     } else {
         colors.red
+    }
+}
+
+/// Parse a size string (e.g., "1024", "1K", "1M", "1G") into bytes
+fn parse_size(size_str: &str) -> Option<u64> {
+    let size_str = size_str.trim().to_uppercase();
+    let (num_str, multiplier) = match size_str.chars().last() {
+        Some('K') => (&size_str[..size_str.len() - 1], 1024),
+        Some('M') => (&size_str[..size_str.len() - 1], 1024 * 1024),
+        Some('G') => (&size_str[..size_str.len() - 1], 1024 * 1024 * 1024),
+        _ => (size_str.as_str(), 1),
+    };
+    num_str
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|n| n * multiplier)
+}
+
+/// Output data for JSON/CSV formats
+#[derive(Serialize)]
+struct OutputEntry {
+    path: String,
+    size: u64,
+    versions: u64,
+    total_uncompressed: u64,
+    total_compressed: u64,
+    ratio: f64,
+}
+
+/// Output summary for JSON format
+#[derive(Serialize)]
+struct OutputSummary {
+    total_files: u64,
+    total_size: u64,
+    total_versions: u64,
+    total_uncompressed: u64,
+    total_compressed: u64,
+    global_ratio: f64,
+}
+
+/// Complete JSON output structure
+#[derive(Serialize)]
+struct JsonOutput {
+    files: Vec<OutputEntry>,
+    summary: OutputSummary,
+}
+
+/// Print output in table format
+#[allow(clippy::cast_precision_loss)]
+fn print_table(
+    sorted_files: &[(&String, &FileStats)],
+    path_width: usize,
+    human_readable: bool,
+) {
+    let colors = Colors::new();
+
+    println!(
+        "{bold}{:<path_width$} {:>14} {:>10} {:>16} {:>16} {:>12}{reset}",
+        "File",
+        "Size",
+        "Versions",
+        "Total Uncomp.",
+        "Total Comp.",
+        "Ratio",
+        bold = colors.bold,
+        reset = colors.reset,
+        path_width = path_width
+    );
+    println!("{}", "-".repeat(path_width + 84));
+
+    for (path, stats) in sorted_files {
+        let size = format_size(stats.latest_size, human_readable);
+        let tu = format_size(stats.total_uncompressed, human_readable);
+        let tc = format_size(stats.total_compressed, human_readable);
+        let ratio = if stats.total_uncompressed > 0 {
+            (stats.total_compressed as f64 / stats.total_uncompressed as f64) * 100.0
+        } else {
+            0.0
+        };
+        let color = get_color(&colors, ratio, stats.latest_size);
+        let dp = if path.len() > path_width {
+            format!("...{}", &path[path.len() - (path_width - 3)..])
+        } else {
+            path.to_string()
+        };
+        let rs = format!(
+            "{color}{:>10.1}%{reset}",
+            ratio,
+            color = color,
+            reset = if color.is_empty() { "" } else { colors.reset }
+        );
+        println!(
+            "{:<path_width$} {:>14} {:>10} {:>16} {:>16} {}",
+            dp,
+            size,
+            stats.versions,
+            tu,
+            tc,
+            rs,
+            path_width = path_width
+        );
+    }
+
+    println!("{}", "-".repeat(path_width + 84));
+    let tf: u64 = sorted_files.iter().map(|(_, s)| s.latest_size).sum();
+    let tv: u64 = sorted_files.iter().map(|(_, s)| s.versions).sum();
+    let tu: u64 = sorted_files.iter().map(|(_, s)| s.total_uncompressed).sum();
+    let tc: u64 = sorted_files.iter().map(|(_, s)| s.total_compressed).sum();
+    let g = if tu > 0 {
+        (tc as f64 / tu as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    println!(
+        "{bold}{:<path_width$} {:>14} {:>10} {:>16} {:>16} {:>11.1}%{reset}",
+        "TOTAL",
+        format_size(tf, human_readable),
+        tv,
+        format_size(tu, human_readable),
+        format_size(tc, human_readable),
+        g,
+        bold = colors.bold,
+        reset = colors.reset,
+        path_width = path_width
+    );
+}
+
+/// Print output in JSON format
+fn print_json(sorted_files: &[(&String, &FileStats)], human_readable: bool) {
+    let files: Vec<OutputEntry> = sorted_files
+        .iter()
+        .map(|(path, stats)| OutputEntry {
+            path: (*path).clone(),
+            size: stats.latest_size,
+            versions: stats.versions,
+            total_uncompressed: stats.total_uncompressed,
+            total_compressed: stats.total_compressed,
+            ratio: stats.ratio(),
+        })
+        .collect();
+
+    let total_size: u64 = files.iter().map(|f| f.size).sum();
+    let total_versions: u64 = files.iter().map(|f| f.versions).sum();
+    let total_uncompressed: u64 = files.iter().map(|f| f.total_uncompressed).sum();
+    let total_compressed: u64 = files.iter().map(|f| f.total_compressed).sum();
+    let global_ratio = if total_uncompressed > 0 {
+        (total_compressed as f64 / total_uncompressed as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let output = JsonOutput {
+        files,
+        summary: OutputSummary {
+            total_files: sorted_files.len() as u64,
+            total_size,
+            total_versions,
+            total_uncompressed,
+            total_compressed,
+            global_ratio,
+        },
+    };
+
+    println!(
+        "{}",
+        if human_readable {
+            serde_json::to_string_pretty(&output).unwrap()
+        } else {
+            serde_json::to_string(&output).unwrap()
+        }
+    );
+}
+
+/// Print output in CSV format
+fn print_csv(sorted_files: &[(&String, &FileStats)]) {
+    println!("path,size,versions,total_uncompressed,total_compressed,ratio");
+    for (path, stats) in sorted_files {
+        println!(
+            "{},{},{},{},{},{:.2}",
+            path,
+            stats.latest_size,
+            stats.versions,
+            stats.total_uncompressed,
+            stats.total_compressed,
+            stats.ratio()
+        );
     }
 }
 
@@ -574,87 +797,44 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Clean up MultiProgress display
     let _ = mp.clear();
 
-    let colors = Colors::new();
-    let max_path_len = sorted_files
-        .iter()
-        .map(|(p, _)| p.len())
-        .max()
-        .unwrap_or(40)
-        .min(60);
-    let path_width = max_path_len.max(20);
+    // Parse min_size threshold if provided
+    let min_size_bytes = args
+        .min_size
+        .as_ref()
+        .and_then(|s| parse_size(s))
+        .unwrap_or(0);
 
-    println!(
-        "{bold}{:<path_width$} {:>14} {:>10} {:>16} {:>16} {:>12}{reset}",
-        "File",
-        "Size",
-        "Versions",
-        "Total Uncomp.",
-        "Total Comp.",
-        "Ratio",
-        bold = colors.bold,
-        reset = colors.reset,
-        path_width = path_width
-    );
-    println!("{}", "-".repeat(path_width + 84));
+    // Filter files based on thresholds
+    let filtered_files: Vec<(&String, &FileStats)> = sorted_files
+        .into_iter()
+        .filter(|(_, stats)| {
+            let passes_size = stats.latest_size >= min_size_bytes;
+            let passes_ratio = args
+                .min_ratio
+                .map_or(true, |min_r| stats.ratio() >= min_r);
+            passes_size && passes_ratio
+        })
+        .collect();
 
-    for (path, stats) in &sorted_files {
-        let size = format_size(stats.latest_size, args.human_readable);
-        let tu = format_size(stats.total_uncompressed, args.human_readable);
-        let tc = format_size(stats.total_compressed, args.human_readable);
-        #[allow(clippy::cast_precision_loss)]
-        let ratio = if stats.total_uncompressed > 0 {
-            (stats.total_compressed as f64 / stats.total_uncompressed as f64) * 100.0
-        } else {
-            0.0
-        };
-        let color = get_color(&colors, ratio, stats.latest_size);
-        let dp = if path.len() > path_width {
-            format!("...{}", &path[path.len() - (path_width - 3)..])
-        } else {
-            path.to_string()
-        };
-        let rs = format!(
-            "{color}{:>10.1}%{reset}",
-            ratio,
-            color = color,
-            reset = if color.is_empty() { "" } else { colors.reset }
-        );
-        println!(
-            "{:<path_width$} {:>14} {:>10} {:>16} {:>16} {}",
-            dp,
-            size,
-            stats.versions,
-            tu,
-            tc,
-            rs,
-            path_width = path_width
-        );
+    // Output based on format
+    match args.format {
+        OutputFormat::Table => {
+            let max_path_len = filtered_files
+                .iter()
+                .map(|(p, _)| p.len())
+                .max()
+                .unwrap_or(40)
+                .min(60);
+            let path_width = max_path_len.max(20);
+            print_table(&filtered_files, path_width, args.human_readable);
+        }
+        OutputFormat::Json => {
+            print_json(&filtered_files, args.human_readable);
+        }
+        OutputFormat::Csv => {
+            print_csv(&filtered_files);
+        }
     }
-
-    println!("{}", "-".repeat(path_width + 84));
-    let tf: u64 = sorted_files.iter().map(|(_, s)| s.latest_size).sum();
-    let tv: u64 = sorted_files.iter().map(|(_, s)| s.versions).sum();
-    let tu: u64 = sorted_files.iter().map(|(_, s)| s.total_uncompressed).sum();
-    let tc: u64 = sorted_files.iter().map(|(_, s)| s.total_compressed).sum();
-    #[allow(clippy::cast_precision_loss)]
-    let g = if tu > 0 {
-        (tc as f64 / tu as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    println!(
-        "{bold}{:<path_width$} {:>14} {:>10} {:>16} {:>16} {:>11.1}%{reset}",
-        "TOTAL",
-        format_size(tf, args.human_readable),
-        tv,
-        format_size(tu, args.human_readable),
-        format_size(tc, args.human_readable),
-        g,
-        bold = colors.bold,
-        reset = colors.reset,
-        path_width = path_width
-    );
 
     Ok(())
 }

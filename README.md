@@ -20,6 +20,8 @@ A high-performance Rust CLI tool to analyze how efficiently files are compressed
     - **Progress Feedback**: Real-time progress bars for history scanning.
     - **Color-Coded Ratios**: Visual indicators for compression efficiency (🟢 < 50%, 🟠 50-80%, 🔴 > 80%).
 - **Flexible Reporting**: Sort by path, size, versions, uncompressed size, compressed size, or ratio.
+- **Multiple Output Formats**: Table (default), JSON, and CSV for programmatic use.
+- **Smart Filtering**: Filter results by minimum file size and compression ratio thresholds.
 
 ## 📦 Installation
 
@@ -62,6 +64,9 @@ git-compression-stats [OPTIONS] [REPO_PATH]
 | `-H, --human-readable` | Use human-readable sizes (KB, MB, GB) |
 | `-s, --sort-by <SORT>` | Set the primary sort column: `path`, `size`, `versions`, `uncompressed`, `compressed`, `ratio` (default: `path`) |
 | `-d, --descending` | Reverse the sort order |
+| `-f, --format <FORMAT>` | Output format: `table` (default), `json`, `csv` |
+| `--min-size <SIZE>` | Minimum file size to display (e.g., `1024`, `1K`, `1M`, `1G`) |
+| `--min-ratio <RATIO>` | Minimum compression ratio to display (0-100%) |
 | `--no-progress` | Disable the interactive progress bar |
 | `-h, --help` | Print help information |
 | `-V, --version` | Print version information |
@@ -98,7 +103,39 @@ git-compression-stats -s ratio -d
 git-compression-stats -H
 ```
 
+**JSON output for programmatic use:**
+```bash
+git-compression-stats --format json
+```
+
+**CSV output for spreadsheet import:**
+```bash
+git-compression-stats --format csv
+```
+
+**Filter by minimum file size (1KB):**
+```bash
+git-compression-stats --min-size 1K
+```
+
+**Filter by minimum compression ratio (50%):**
+```bash
+git-compression-stats --min-ratio 50
+```
+
+**Combined filters with JSON output:**
+```bash
+git-compression-stats --format json --min-size 1K --min-ratio 30
+```
+
+**Pipe JSON to jq for further processing:**
+```bash
+git-compression-stats --format json --min-size 5K | jq '.files[] | select(.ratio > 40)'
+```
+
 ## 📊 Example Output
+
+### Table Format (Default)
 
 ```text
 File                           Size   Versions    Total Uncomp.      Total Comp.        Ratio
@@ -109,6 +146,41 @@ Cargo.toml                    288 B          2            542 B            210 B
 src/main.rs                 15379 B          4          32023 B           5620 B       17.5%
 --------------------------------------------------------------------------------------------------------
 TOTAL                       71999 B          9         142216 B          19900 B        14.0%
+```
+
+### JSON Format
+
+```json
+{
+  "files": [
+    {
+      "path": "src/main.rs",
+      "size": 15379,
+      "versions": 4,
+      "total_uncompressed": 32023,
+      "total_compressed": 5620,
+      "ratio": 17.55
+    }
+  ],
+  "summary": {
+    "total_files": 4,
+    "total_size": 71999,
+    "total_versions": 9,
+    "total_uncompressed": 142216,
+    "total_compressed": 19900,
+    "global_ratio": 14.0
+  }
+}
+```
+
+### CSV Format
+
+```csv
+path,size,versions,total_uncompressed,total_compressed,ratio
+.gitignore,8,1,8,17,212.50
+Cargo.lock,56324,2,109643,14053,12.82
+Cargo.toml,288,2,542,210,38.75
+src/main.rs,15379,4,32023,5620,17.55
 ```
 
 ### Color Coding
@@ -129,6 +201,7 @@ The ratio column is color-coded based on compression efficiency:
 | `clap` | Command-line argument parsing and validation |
 | `human-size` | Formats raw byte counts into human-readable units |
 | `indicatif` | Progress bars and terminal styling |
+| `serde` + `serde_json` | JSON serialization for programmatic output |
 
 ### Data Flow
 
