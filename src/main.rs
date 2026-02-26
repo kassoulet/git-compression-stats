@@ -429,15 +429,20 @@ fn get_all_sizes(repo_path: &PathBuf) -> HashMap<String, (u64, u64)> {
 
     if let Some(mut child) = child {
         let stdout = child.stdout.take().unwrap();
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 {
-                let oid = parts[0].to_string();
-                let uncompressed = parts[1].parse::<u64>().unwrap_or(0);
-                let compressed = parts[2].parse::<u64>().unwrap_or(0);
-                all_sizes.insert(oid, (uncompressed, compressed));
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+
+        // Use a reusable buffer to avoid allocations in each iteration
+        while reader.read_line(&mut line).is_ok_and(|n| n > 0) {
+            let mut parts = line.split_whitespace();
+            if let (Some(oid), Some(uncomp_str), Some(comp_str)) =
+                (parts.next(), parts.next(), parts.next())
+            {
+                let uncompressed = uncomp_str.parse::<u64>().unwrap_or(0);
+                let compressed = comp_str.parse::<u64>().unwrap_or(0);
+                all_sizes.insert(oid.to_string(), (uncompressed, compressed));
             }
+            line.clear();
         }
         let _ = child.wait();
     }
@@ -465,9 +470,9 @@ fn analyze_repo(
     }
 
     // Phase 1 and 2: Run object sizing and history in parallel
-    let ((all_sizes, current_latest), history_blobs) = rayon::join(
+    let ((all_sizes, current_files), history_blobs) = rayon::join(
         || {
-            // Task A: Object sizes and Task C: Latest sizes
+            // Task A: Object sizes and Task C: Latest files (OID and uncompressed size)
             let sizes = get_all_sizes(repo_path);
             let mut latest = HashMap::new();
 
@@ -481,13 +486,12 @@ fn analyze_repo(
                 if output.status.success() {
                     let tree_data = String::from_utf8_lossy(&output.stdout);
                     for entry in tree_data.split('\0').filter(|s| !s.is_empty()) {
-                        let parts: Vec<&str> = entry.split_whitespace().collect();
-                        if parts.len() >= 3 {
-                            let oid = parts[2];
-                            let filename = entry.split('\t').nth(1).unwrap_or("");
-                            if !filename.is_empty() {
+                        if let Some((metadata, filename)) = entry.split_once('\t') {
+                            let mut parts = metadata.split_whitespace();
+                            if let Some(oid) = parts.nth(2) {
                                 let (uncompressed, _) = sizes.get(oid).copied().unwrap_or((0, 0));
-                                latest.insert(filename.to_string(), uncompressed);
+                                // Store OID too for current_only mode
+                                latest.insert(filename.to_string(), (oid.to_string(), uncompressed));
                             }
                         }
                     }
@@ -558,12 +562,17 @@ fn analyze_repo(
                         });
 
                         let stdout = child.stdout.take().unwrap();
-                        let reader = BufReader::new(stdout);
-                        for line in reader.lines().map_while(Result::ok) {
-                            if let Some((metadata, path)) = line.split_once('\t') {
-                                let parts: Vec<&str> = metadata.split_whitespace().collect();
-                                if parts.len() >= 5 {
-                                    let new_oid = parts[3];
+                        let mut reader = BufReader::new(stdout);
+                        let mut line = String::new();
+
+                        // Use a reusable buffer to avoid allocations in each iteration
+                        while reader.read_line(&mut line).is_ok_and(|n| n > 0) {
+                            let trimmed = line.trim_end();
+                            if let Some((metadata, path)) = trimmed.split_once('\t') {
+                                let mut parts = metadata.split_whitespace();
+                                // git diff-tree --raw format:
+                                // :<old-mode> <new-mode> <old-oid> <new-oid> <status>
+                                if let Some(new_oid) = parts.nth(3) {
                                     if !new_oid.chars().all(|c| c == '0') {
                                         chunk_blobs
                                             .entry(path.to_string())
@@ -572,6 +581,7 @@ fn analyze_repo(
                                     }
                                 }
                             }
+                            line.clear();
                         }
                         let _ = child.wait();
                     }
@@ -582,7 +592,11 @@ fn analyze_repo(
 
                     chunk_blobs
                 })
-                .reduce(HashMap::new, |mut a, b| {
+                .reduce(HashMap::new, |mut a, mut b| {
+                    // Optimization: merge the smaller map into the larger one to minimize allocations
+                    if a.len() < b.len() {
+                        std::mem::swap(&mut a, &mut b);
+                    }
                     for (path, set2) in b {
                         a.entry(path).or_default().extend(set2);
                     }
@@ -607,59 +621,36 @@ fn analyze_repo(
     let mut final_stats = HashMap::new();
 
     if current_only {
-        // Just the current files
-        for (path, latest_size) in current_latest {
-            let stats = final_stats.entry(path).or_insert_with(FileStats::default);
-            stats.latest_size = latest_size;
-            // Since we skipped Task B, we need to get total stats for these current files
-            // Wait, if current_only, we only count 1 version
-            stats.versions = 1;
-            // We need to look up uncompressed/compressed for the current blob
-            // This requires we have the OID from the ls-tree. Let's fix Task A above.
-            // (Self-correction: I'll re-run Task B logic just for HEAD in the current_only branch if needed)
+        // Fast path for current working tree only
+        for (path, (oid, latest_size)) in current_files {
+            let (u, c) = all_sizes.get(&oid).copied().unwrap_or((0, 0));
+            final_stats.insert(
+                path,
+                FileStats {
+                    versions: 1,
+                    total_uncompressed: u,
+                    total_compressed: c,
+                    latest_size,
+                },
+            );
         }
-        // Actually, current_only is best handled by just Phase 1 + a modified Phase 2.
     } else {
+        // Deep history analysis
         for (path, oids) in history_blobs {
+            let latest_size = current_files.get(&path).map_or(0, |(_, size)| *size);
             let mut stats = FileStats {
                 versions: oids.len() as u64,
                 total_uncompressed: 0,
                 total_compressed: 0,
-                latest_size: *current_latest.get(&path).unwrap_or(&0),
+                latest_size,
             };
             for oid in oids {
-                let (u, c) = all_sizes.get(&oid).copied().unwrap_or((0, 0));
-                stats.total_uncompressed += u;
-                stats.total_compressed += c;
-            }
-            final_stats.insert(path, stats);
-        }
-    }
-
-    // Special case for current_only if the above was skipped
-    if current_only {
-        // Rerun a quick pass for HEAD
-        let tree_output = Command::new("git")
-            .args(["ls-tree", "-r", "-z", "HEAD"])
-            .current_dir(repo_path)
-            .output()?;
-        if tree_output.status.success() {
-            let tree_data = String::from_utf8_lossy(&tree_output.stdout);
-            for entry in tree_data.split('\0').filter(|s| !s.is_empty()) {
-                let parts: Vec<&str> = entry.split_whitespace().collect();
-                if parts.len() >= 3 {
-                    let oid = parts[2];
-                    let filename = entry.split('\t').nth(1).unwrap_or("");
-                    if !filename.is_empty() {
-                        let (u, c) = all_sizes.get(oid).copied().unwrap_or((0, 0));
-                        let stats = final_stats.entry(filename.to_string()).or_default();
-                        stats.versions = 1;
-                        stats.total_uncompressed = u;
-                        stats.total_compressed = c;
-                        stats.latest_size = u;
-                    }
+                if let Some(&(u, c)) = all_sizes.get(&oid) {
+                    stats.total_uncompressed += u;
+                    stats.total_compressed += c;
                 }
             }
+            final_stats.insert(path, stats);
         }
     }
 
