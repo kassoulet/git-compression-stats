@@ -189,6 +189,13 @@ fn get_color(colors: &Colors, ratio: f64, size: u64) -> &'static str {
     }
 }
 
+/// Sanitize a path by replacing control characters with '?'
+fn sanitize_path(path: &str) -> String {
+    path.chars()
+        .map(|c| if c.is_ascii_control() { '?' } else { c })
+        .collect()
+}
+
 /// Parse a size string (e.g., "1024", "1K", "1M", "1G") into bytes
 fn parse_size(size_str: &str) -> Option<u64> {
     let size_str = size_str.trim().to_uppercase();
@@ -259,10 +266,19 @@ fn print_table(sorted_files: &[(&String, &FileStats)], path_width: usize, human_
             0.0
         };
         let color = get_color(&colors, ratio, stats.latest_size);
-        let dp = if path.len() > path_width {
-            format!("...{}", &path[path.len() - (path_width - 3)..])
+        let sanitized = sanitize_path(path);
+        let dp = if sanitized.chars().count() > path_width {
+            let truncated: String = sanitized
+                .chars()
+                .rev()
+                .take(path_width - 3)
+                .collect::<Vec<char>>()
+                .into_iter()
+                .rev()
+                .collect();
+            format!("...{truncated}")
         } else {
-            (*path).clone()
+            sanitized
         };
         let rs = format!(
             "{color}{:>10.1}%{reset}",
@@ -312,7 +328,7 @@ fn print_json(sorted_files: &[(&String, &FileStats)], human_readable: bool) {
     let files: Vec<OutputEntry> = sorted_files
         .iter()
         .map(|(path, stats)| OutputEntry {
-            path: (*path).clone(),
+            path: sanitize_path(path),
             size: stats.latest_size,
             versions: stats.versions,
             total_uncompressed: stats.total_uncompressed,
@@ -360,7 +376,7 @@ fn print_csv(sorted_files: &[(&String, &FileStats)]) {
     for (path, stats) in sorted_files {
         println!(
             "{},{},{},{},{},{:.2}",
-            path,
+            sanitize_path(path),
             stats.latest_size,
             stats.versions,
             stats.total_uncompressed,
