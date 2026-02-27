@@ -14,6 +14,7 @@
 //! - Filtering by size and compression ratio thresholds
 
 use clap::{Parser, ValueEnum};
+use csv::Writer;
 use human_size::{Byte, SpecificSize};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -372,18 +373,35 @@ fn print_json(sorted_files: &[(&String, &FileStats)], human_readable: bool) {
 
 /// Print output in CSV format
 fn print_csv(sorted_files: &[(&String, &FileStats)]) {
-    println!("path,size,versions,total_uncompressed,total_compressed,ratio");
+    let mut wtr = Writer::from_writer(vec![]);
+
+    // Write header
+    wtr.write_record([
+        "path",
+        "size",
+        "versions",
+        "total_uncompressed",
+        "total_compressed",
+        "ratio",
+    ])
+    .unwrap();
+
+    // Write records
     for (path, stats) in sorted_files {
-        println!(
-            "{},{},{},{},{},{:.2}",
+        wtr.write_record(&[
             sanitize_path(path),
-            stats.latest_size,
-            stats.versions,
-            stats.total_uncompressed,
-            stats.total_compressed,
-            stats.ratio()
-        );
+            stats.latest_size.to_string(),
+            stats.versions.to_string(),
+            stats.total_uncompressed.to_string(),
+            stats.total_compressed.to_string(),
+            format!("{:.2}", stats.ratio()),
+        ])
+        .unwrap();
     }
+
+    wtr.flush().unwrap();
+    let csv_data = wtr.into_inner().unwrap();
+    print!("{}", String::from_utf8_lossy(&csv_data));
 }
 
 /// Find all Git repositories in a directory (recursively)
@@ -840,4 +858,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_path_removes_control_chars() {
+        assert_eq!(
+            sanitize_path("path/with\x01control.txt"),
+            "path/with?control.txt"
+        );
+        assert_eq!(sanitize_path("normal.txt"), "normal.txt");
+    }
+
+    #[test]
+    fn test_sanitize_path_with_comma() {
+        // Commas are preserved - csv crate handles quoting
+        assert_eq!(
+            sanitize_path("linux/Documentation/devicetree/bindings/sound/realtek,rt5575.yaml"),
+            "linux/Documentation/devicetree/bindings/sound/realtek,rt5575.yaml"
+        );
+    }
 }
